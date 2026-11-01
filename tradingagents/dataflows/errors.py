@@ -8,6 +8,7 @@ these (or a thin vendor-named subclass) and needs no new ``except`` clause.
     VendorError
     ├── NoMarketDataError          no usable rows (empty result OR stale data)
     ├── VendorUnavailableError     throttled or failed request -> skip to next vendor
+    ├── VendorNotApplicableError   vendor does not cover this instrument -> skip, no verdict poisoning
     └── VendorNotConfiguredError   missing API key/config -> vendor unavailable
 
 The number of types is the number of distinct router reactions, not the number
@@ -47,6 +48,17 @@ class VendorUnavailableError(VendorError):
     """A vendor could not answer: it throttled or failed the request.
 
     Says nothing about the instrument; the router skips to the next vendor.
+    """
+
+
+class VendorNotApplicableError(VendorError):
+    """A vendor structurally does not cover this instrument (e.g. a US ticker
+    reaching the A-share vendor).
+
+    Unlike a throttle, the vendor *did* answer — definitively — that the
+    instrument is outside its coverage, so the router skips to the next vendor
+    without recording a failure: the chain's final verdict stays whatever the
+    covering vendors said, instead of being masked by "unavailable".
     """
 
 

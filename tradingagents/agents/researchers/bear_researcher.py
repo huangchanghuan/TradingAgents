@@ -52,7 +52,9 @@ Use this information to deliver a compelling bear argument, refute the bull's cl
 
         response = llm.invoke(prompt)
 
-        argument = f"Bear Analyst: {response.content}"
+        from tradingagents.agents.labels import debate_label
+
+        argument = f"{debate_label('Bear Analyst')}: {response.content}"
 
         new_investment_debate_state = {
             "history": history + "\n" + argument,

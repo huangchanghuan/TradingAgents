@@ -12,7 +12,6 @@ from langgraph.prebuilt import InjectedState
 from tradingagents.dataflows.date_window import as_of, as_of_window
 from tradingagents.dataflows.errors import NoMarketDataError, VendorUnavailableError
 from tradingagents.dataflows.router import no_data_available, route_to_vendor, vendor_unavailable
-from tradingagents.dataflows.vendors.yahoo.snapshot import build_verified_market_snapshot
 
 
 @tool
@@ -87,7 +86,9 @@ def get_verified_market_snapshot(
     """
     # An exception out of a tool would end the run.
     try:
-        return build_verified_market_snapshot(symbol, as_of(curr_date, trade_date), look_back_days)
+        return route_to_vendor(
+            "get_verified_market_snapshot", symbol, as_of(curr_date, trade_date), look_back_days,
+        )
     except VendorUnavailableError as exc:
         return vendor_unavailable("get_verified_market_snapshot", exc)
     except NoMarketDataError as exc:
@@ -262,6 +263,58 @@ def get_macro_indicators(
         str: A formatted markdown report of the macro series
     """
     return route_to_vendor("get_macro_indicators", indicator, as_of(curr_date, trade_date), look_back_days)
+
+
+@tool
+def get_china_rates(
+    curr_date: Annotated[str, "Current date in yyyy-mm-dd format; the end of the window"],
+    look_back_days: Annotated[
+        int | None, "Trailing window length in days; omit for a 90-day window"
+    ] = None,
+    trade_date: Annotated[str, InjectedState("trade_date")] = "",
+) -> str:
+    """
+    Retrieve China onshore rates: the LPR (loan prime rate) monthly quotes and
+    the CGB (中债国债) treasury yield curve 1Y/10Y daily series, with the
+    10Y-1Y term spread. Use this for China/HK-rate context (港股通 assets,
+    rate-sensitive A-share sectors); use get_macro_indicators for US/euro-area
+    series. Both sources are dated historical series, so past-dated runs see
+    only what was published by then. Uses the configured macro_data vendor.
+
+    Args:
+        curr_date (str): Current date in yyyy-mm-dd format
+        look_back_days (int): Trailing window length; omit for 90 days
+
+    Returns:
+        str: A formatted markdown report of LPR and the CGB curve
+    """
+    return route_to_vendor("get_china_rates", as_of(curr_date, trade_date), look_back_days)
+
+
+@tool
+def get_southbound_flow(
+    curr_date: Annotated[str, "Current date in yyyy-mm-dd format; the end of the window"],
+    look_back_days: Annotated[
+        int | None, "Trailing window length in trading days; omit for 30 days"
+    ] = None,
+    trade_date: Annotated[str, InjectedState("trade_date")] = "",
+) -> str:
+    """
+    Retrieve southbound Stock Connect (港股通) fund flow: daily turnover for
+    the SH and SZ legs and the SZ leg's daily net buy, over a trailing window.
+    Relevant for HK-connected A-share/HK ETF analysis (南向资金 sentiment).
+    Note: the SH leg discontinued publishing net buy upstream, so the combined
+    net is a lower bound; the report says so explicitly. Uses the configured
+    fund_flow_data vendor.
+
+    Args:
+        curr_date (str): Current date in yyyy-mm-dd format
+        look_back_days (int): Trailing window length; omit for 30 days
+
+    Returns:
+        str: A formatted markdown report of southbound flow
+    """
+    return route_to_vendor("get_southbound_flow", as_of(curr_date, trade_date), look_back_days)
 
 
 @tool

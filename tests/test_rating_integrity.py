@@ -43,13 +43,24 @@ def test_prose_naming_several_ratings_without_a_label_needs_review():
 @pytest.mark.unit
 @pytest.mark.parametrize("prose", [
     "We would not Sell here; the dip is a chance to add.",
-    "**评级**：买入\n\n不建议卖出 (Sell)。",   # a label in another language, and a negated Sell
     "On balance we stay Underweight until margins recover.",
 ])
 def test_a_rating_word_without_a_label_is_not_read_as_the_call(prose):
     """A rating word in prose may be one the text argues against (#1435)."""
     assert extract_rating(prose) is None
     assert parse_rating(prose) == RATING_REVIEW
+
+
+@pytest.mark.unit
+def test_a_chinese_rating_label_is_read_as_the_call():
+    """A Chinese-language decision line ("**评级**：买入") is a rating label: the
+    parser reads it back to the canonical tier, and a negated English word later
+    in the prose does not override it."""
+    assert extract_rating("**评级**：买入\n\n不建议卖出 (Sell)。") == "Buy"
+    assert parse_rating("**评级**：增持") == "Overweight"
+    assert parse_rating("**评级**：持有") == "Hold"
+    assert parse_rating("**评级**：减持") == "Underweight"
+    assert parse_rating("**评级**：卖出") == "Sell"
 
 
 @pytest.mark.unit
@@ -301,3 +312,13 @@ def test_ratings_that_disagree_with_no_line_of_the_decisions_own_need_review(tex
     """When the text never states its own rating in the decision's shape and the
     ratings it names disagree, nobody can tell which is the call (#1170)."""
     assert extract_rating(text) is None
+
+
+@pytest.mark.unit
+def test_a_chinese_opening_line_short_circuits_like_an_english_one():
+    """The Chinese decision line tolerates the same emphasis marks as the English
+    one, so "**评级**：增持" is the call on line one — a later label quoting
+    someone else's rating must not force the decision into REVIEW, exactly as
+    the English spelling behaves."""
+    assert extract_rating("**评级**：增持\n\n机构评级：持有（某券商）。") == "Overweight"
+    assert extract_rating("**Rating**: Overweight\n\n机构评级：持有（某券商）。") == "Overweight"

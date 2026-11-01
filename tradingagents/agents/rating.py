@@ -31,21 +31,44 @@ RATING_REVIEW = "REVIEW"
 
 _RATING_SET = {r.lower() for r in RATINGS_5_TIER}
 
-# Matches "Rating: X" / "rating - X" / "Rating — **X**" — tolerates markdown
-# bold wrappers and any dash or colon a model writes as the separator. "rating"
-# must start a word, so "Operating margin: Sell-side" is not a label.
-_RATING_LABEL_RE = re.compile(r"(?<![a-z])rating\b[^:\-\u2010-\u2015]*[:\-\u2010-\u2015][\s*]*(\w+)",
-                              re.IGNORECASE)
+# Chinese renderings (see agents.labels): a Chinese-language report writes
+# "评级：增持", so the parser must read those back to the canonical values.
+_ZH_RATING_ALIASES: dict[str, str] = {
+    "买入": "buy",
+    "增持": "overweight",
+    "持有": "hold",
+    "减持": "underweight",
+    "卖出": "sell",
+}
+
+def _canonical(value: str) -> str | None:
+    """A written rating word to its canonical capitalized form, else None."""
+    low = value.lower()
+    if low in _ZH_RATING_ALIASES:
+        return _ZH_RATING_ALIASES[low].capitalize()
+    if low in _RATING_SET:
+        return low.capitalize()
+    return None
+
+# Matches "Rating: X" / "rating - X" / "Rating — **X**" / "评级：X" — tolerates
+# markdown bold wrappers and any dash or colon a model writes as the separator.
+# "rating" must start a word, so "Operating margin: Sell-side" is not a label.
+_RATING_LABEL_RE = re.compile(
+    r"(?<![a-z])(?:rating\b|评级)[^:\-\u2010-\u2015]*[:\-\u2010-\u2015][\s*]*([\w一-鿿]+)",
+    re.IGNORECASE)
 
 # The decision's own rating line, in the shape the Portfolio Manager is asked to
-# open with ("- **Rating**: X", "**Final Rating**: X", "## Our rating - X"): an
-# optional list marker, emphasis and heading marks, and only words naming the
-# decision itself before "rating". "Consensus rating: Buy" or "Trader's rating:
-# Buy" is someone else's rating.
+# open with ("- **Rating**: X", "**Final Rating**: X", "## Our rating - X",
+# "**评级**：增持"): an optional list marker, emphasis and heading marks, and
+# only words naming the decision itself before "rating". "Consensus rating:
+# Buy" or "Trader's rating: Buy" is someone else's rating. The Chinese branch
+# tolerates the same emphasis/heading marks between the keyword and the
+# separator as the English one, so a Chinese decision's opening line short-
+# circuits exactly like an English one.
 _OWN_QUALIFIER = r"(?:(?:final|our|overall|my|recommended|updated|revised|new|current)\s+)*"
 _RATING_LINE_RE = re.compile(
     r"\s*(?P<item>(?:[-+*\u2022]|\d+[.)])\s+)?[\s*_#]*" + _OWN_QUALIFIER
-    + r"rating[^\w:\-\u2010-\u2015]*[:\-\u2010-\u2015][\s*]*(?P<value>\w+)",
+    + r"(?:rating[^\w:\-\u2010-\u2015]*|评级[\s*_#]*)[:\-\u2010-\u2015][\s*]*(?P<value>[\w一-鿿]+)",
     re.IGNORECASE,
 )
 
@@ -75,21 +98,21 @@ def extract_rating(text: str) -> str | None:
     first = next((line for line in lines if not line.lstrip().startswith("#")
                   or _RATING_LINE_RE.match(line)), "")
     m = _RATING_LINE_RE.match(first)
-    opening = m if m and m.group("value").lower() in _RATING_SET else None
+    opening = m if m and _canonical(m.group("value")) else None
     if opening and not opening.group("item"):
-        return opening.group("value").capitalize()
+        return _canonical(opening.group("value"))
 
-    own = [opening.group("value").capitalize()] if opening else []
+    own = [_canonical(opening.group("value"))] if opening else []
     labels = []
     for line in lines:
         m = _RATING_LINE_RE.match(line)
-        if m and not m.group("item") and m.group("value").lower() in _RATING_SET:
-            own.append(m.group("value").capitalize())
-        labels += [v.capitalize() for v in _RATING_LABEL_RE.findall(line) if v.lower() in _RATING_SET]
+        if m and not m.group("item") and _canonical(m.group("value")):
+            own.append(_canonical(m.group("value")))
+        labels += [v for v in (_canonical(w) for w in _RATING_LABEL_RE.findall(line)) if v]
     # Without a label there is no call to read: a rating word in the prose may be
     # one the text argues against ("not a Sell"), and reading it reports a
     # direction nobody decided.
-    found = own or labels
+    found = [v for v in own or labels if v]
     return found[0] if found and len(set(found)) == 1 else None
 
 

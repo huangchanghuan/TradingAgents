@@ -322,6 +322,48 @@ def _is_native_openai_base_url(base_url: str | None) -> bool:
     return host == "api.openai.com" or host.endswith(".openai.com")
 
 
+def _is_loopback_base_url(base_url: str | None) -> bool:
+    """True when ``base_url`` points at the local machine.
+
+    Local gateways (magpie and friends) attribute requests to a conversation
+    via a header; remote APIs need no such thing.
+    """
+    if not base_url:
+        return False
+    if "://" not in base_url:
+        base_url = "http://" + base_url
+    host = urlparse(base_url).hostname or ""
+    return host in ("127.0.0.1", "localhost", "::1", "[::1]")
+
+
+def _conversation_header() -> dict[str, str] | None:
+    """Headers naming this run's conversation for local gateway attribution.
+
+    magpie's gateway groups usage-log entries by the session a request names:
+    ``X-Magpie-Session`` is its generic hook (gateway.sessionOf; known-agent
+    headers like x-claude-code-session-id and x-conversation-id also work).
+    Without it every call lands in the "no session id" bucket in its usage
+    view. ``TRADINGAGENTS_CONVERSATION_ID`` (set by run.sh to ``ticker-date``)
+    names the run explicitly; a loopback endpoint without it still gets a
+    per-process fallback so the calls are at least grouped together.
+    """
+    conversation = os.environ.get("TRADINGAGENTS_CONVERSATION_ID")
+    if not conversation and _is_loopback_base_url(
+        os.environ.get("TRADINGAGENTS_LLM_BACKEND_URL")
+    ):
+        from datetime import datetime
+
+        conversation = f"tradingagents-{os.getpid()}-{datetime.now():%Y%m%d-%H%M%S}"
+    if not conversation:
+        return None
+    # HTTP headers are latin-1 on the wire and the openai SDK enforces it;
+    # drop anything a header cannot carry (e.g. CJK in a ticker name).
+    conversation = re.sub(r"[^\x20-\x7e]", "", conversation).strip("-")
+    if not conversation:
+        return None
+    return {"X-Magpie-Session": conversation}
+
+
 class OpenAIClient(BaseLLMClient):
     """Client for OpenAI, Ollama, OpenRouter, and xAI providers.
 
@@ -402,6 +444,13 @@ class OpenAIClient(BaseLLMClient):
             if key == "reasoning_effort" and not _supports_reasoning_effort(self.model):
                 continue
             llm_kwargs[key] = self.kwargs[key]
+
+        # Local gateway (magpie) conversation attribution; user-set
+        # default_headers win, so only fill the gap.
+        header = _conversation_header()
+        if header:
+            merged = {**header, **self.kwargs.get("default_headers", {})}
+            llm_kwargs["default_headers"] = merged
 
         # The subclass (provider quirks) comes from the registry spec.
         return chat_cls(**llm_kwargs)

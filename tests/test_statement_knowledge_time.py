@@ -51,13 +51,26 @@ def test_a_current_run_is_still_served_yahoo_statements():
 
 @pytest.mark.unit
 def test_statements_come_from_sec_edgar_first_by_default():
+    """A US ticker's statements are SEC EDGAR's: every earlier vendor in the
+    default chain must step aside rather than answer for a symbol it does not
+    cover, so an A-share-only vendor at the head cannot shadow it."""
+    from tradingagents.dataflows.errors import VendorUnavailableError
+
     set_config(copy.deepcopy(default_config.DEFAULT_CONFIG))
     served = []
+
+    def declines(*a, **k):
+        served.append("a_stock")
+        raise VendorUnavailableError("a_stock does not cover US listings")
+
     chain = {name: (lambda *a, _n=name, **k: served.append(_n) or f"{_n} statements")
              for name in router.VENDOR_METHODS["get_balance_sheet"]}
+    chain["a_stock"] = declines
     with mock.patch.dict(router.VENDOR_METHODS, {"get_balance_sheet": chain}):
-        router.route_to_vendor("get_balance_sheet", "AAPL", "quarterly", PAST)
-    assert served == ["sec_edgar"]
+        out = router.route_to_vendor("get_balance_sheet", "AAPL", "quarterly", PAST)
+
+    assert out == "sec_edgar statements"
+    assert served[-1] == "sec_edgar"
 
 
 @pytest.mark.unit

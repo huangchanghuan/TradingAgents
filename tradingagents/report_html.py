@@ -204,6 +204,7 @@ def _render_agent_text(md: MarkdownIt, text: str) -> str:
 _CATEGORY = {
     "core_stock_apis": "Prices", "technical_indicators": "Indicators", "fundamental_data": "Fundamentals",
     "news_data": "News", "macro_data": "Macro", "prediction_markets": "Prediction markets",
+    "fund_flow_data": "Fund flow", "cn_rates_data": "CN rates",
 }
 
 
@@ -223,25 +224,48 @@ def _group(name: str, values_html: str) -> str:
 
 def _run_details(final_state: dict, settings: dict | None) -> list[tuple[str, str]]:
     """The run details as (label, value HTML); every value from the run is escaped."""
-    details = [("Generated", escape(datetime.now().strftime("%Y-%m-%d %H:%M")))]
+    from tradingagents.agents.labels import is_zh_for
+
+    zh = is_zh_for(settings)
+    label = {
+        "Generated": "生成时间",
+        " model": "模型",
+        "Analysts": "分析师",
+        "Debate rounds": "辩论轮数",
+        "Data vendors": "数据源",
+        "Version": "版本",
+        "Memory log": "记忆日志",
+        "research": "研究",
+        "risk": "风险",
+    }
+    def L(en: str) -> str:
+        if not zh:
+            return en
+        if en in label:
+            return label[en]
+        if en.endswith(" model"):
+            return en.removesuffix(" model") + " 模型"
+        return en
+
+    details = [(L("Generated"), escape(datetime.now().strftime("%Y-%m-%d %H:%M")))]
     if settings:
         s = settings.get
         for tier in ("deep", "quick"):
             provider = s(f"{tier}_think_provider") or s("llm_provider", "?")
-            details.append((f"{tier.capitalize()} model", _fields([provider, s(f"{tier}_think_llm", "?")])))
-        details.append(("Analysts", _fields(analyst_names(s("analysts")))))
-        details.append(("Debate rounds", " ".join((
-            _group("research", _fields([s("max_debate_rounds", "?")])),
-            _group("risk", _fields([s("max_risk_discuss_rounds", "?")])),
+            details.append((L(f"{tier.capitalize()} model"), _fields([provider, s(f"{tier}_think_llm", "?")])))
+        details.append((L("Analysts"), _fields(analyst_names(s("analysts")))))
+        details.append((L("Debate rounds"), " ".join((
+            _group(L("research"), _fields([s("max_debate_rounds", "?")])),
+            _group(L("risk"), _fields([s("max_risk_discuss_rounds", "?")])),
         ))))
         vendors = {**(s("data_vendors") or {}), **(s("tool_vendors") or {})}
         if vendors:
-            details.append(("Data vendors", " ".join(
+            details.append((L("Data vendors"), " ".join(
                 _group(_CATEGORY.get(k, k), _chain(v)) for k, v in vendors.items()
             )))
-        details.append(("Version", escape(f"TradingAgents {s('version', '?')}")))
+        details.append((L("Version"), escape(f"TradingAgents {s('version', '?')}")))
     if final_state.get("memory_note"):
-        details.append(("Memory log", escape(final_state["memory_note"])))
+        details.append((L("Memory log"), escape(final_state["memory_note"])))
     return details
 
 
@@ -276,8 +300,10 @@ def render_report(ticker: str, final_state: dict, settings: dict | None, parts) 
         body.append("</section>")
 
     page_title = " ".join(x for x in (ticker, date, rating) if x)
+    from tradingagents.agents.labels import is_zh_for
+    lang = "zh" if is_zh_for(settings) else "en"
     return f"""<!doctype html>
-<html lang="en">
+<html lang="{lang}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">

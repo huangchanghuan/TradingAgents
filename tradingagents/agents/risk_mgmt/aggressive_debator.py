@@ -47,7 +47,9 @@ Engage actively by addressing any specific concerns raised, refuting the weaknes
 
         response = llm.invoke(prompt)
 
-        argument = f"Aggressive Analyst: {response.content}"
+        from tradingagents.agents.labels import debate_label
+
+        argument = f"{debate_label('Aggressive Analyst')}: {response.content}"
 
         new_risk_debate_state = {
             "history": history + "\n" + argument,

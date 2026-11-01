@@ -21,7 +21,7 @@ from pydantic import Field
 from tradingagents.agents import context, schemas
 from tradingagents.agents.analysts import sentiment_analyst
 from tradingagents.dataflows import router
-from tradingagents.dataflows.vendors.yahoo import market as yahoo_market, snapshot
+from tradingagents.dataflows.vendors.yahoo import market as yahoo_market
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.graph import trading_graph
 
@@ -107,12 +107,6 @@ def offline(monkeypatch, tmp_path):
         for vendor in vendors:
             monkeypatch.setitem(vendors, vendor,
                                 lambda *a, _m=method, **k: called.add(_m) or f"{_m} data")
-    prices = pd.DataFrame({
-        "Date": pd.bdate_range(end=TRADE_DATE, periods=60),
-        "Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.5, "Volume": 1_000_000,
-    })
-    monkeypatch.setattr(snapshot, "load_ohlcv",
-                        lambda *a, **k: called.add("ohlcv") or prices.copy())
     monkeypatch.setattr(sentiment_analyst, "fetch_stocktwits_messages", lambda *a, **k: "no posts")
     monkeypatch.setattr(sentiment_analyst, "fetch_reddit_posts", lambda *a, **k: "no posts")
     monkeypatch.setattr(yahoo_market.yf, "Ticker", lambda s: type("T", (), {"info": {"longName": "NVIDIA"}})())
@@ -140,9 +134,10 @@ def test_a_full_run_reaches_a_logged_decision(tmp_path, monkeypatch, offline, st
                 "investment_plan", "trader_investment_plan", "final_trade_decision"):
         assert state[key].strip(), key
     tool_methods = {"get_stock_data", "get_indicators", "get_news", "get_global_news",
-                    "get_macro_indicators", "get_prediction_markets", "get_fundamentals",
+                    "get_macro_indicators", "get_china_rates", "get_southbound_flow",
+                    "get_prediction_markets", "get_fundamentals",
                     "get_balance_sheet", "get_cashflow", "get_income_statement",
-                    "get_insider_transactions", "ohlcv"}
+                    "get_insider_transactions", "get_verified_market_snapshot"}
     assert offline == tool_methods
     assert [e["rating"] for e in graph.memory_log.load_entries()] == ["Overweight"]
 
@@ -225,8 +220,12 @@ def test_a_streamed_run_reads_its_own_graph_config(tmp_path, monkeypatch, offlin
     graph = _graph(tmp_path, monkeypatch, ScriptedModel(), output_language="French")
     set_config({"output_language": "German"})
     seen = []
-    monkeypatch.setitem(router.VENDOR_METHODS["get_stock_data"], "yfinance",
-                        lambda *a, **k: seen.append(get_config()["output_language"]) or "prices")
+    # Patch the whole chain, not one named vendor: whichever vendor the default
+    # chain reaches first must report the run's config, and pinning this to a
+    # single vendor turns the chain order into a hidden assertion.
+    for vendor in router.VENDOR_METHODS["get_stock_data"]:
+        monkeypatch.setitem(router.VENDOR_METHODS["get_stock_data"], vendor,
+                            lambda *a, **k: seen.append(get_config()["output_language"]) or "prices")
 
     between = [get_config()["output_language"]
                for _ in graph.stream_run(graph.create_run_state("NVDA", TRADE_DATE), **graph.propagator.get_graph_args())]

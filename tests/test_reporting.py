@@ -173,3 +173,128 @@ def test_the_header_names_the_analysts_as_users_select_them(tmp_path):
     page = (tmp_path / "complete_report.html").read_text(encoding="utf-8")
     fields = re.findall(r'<span class="field">([^<]*)</span>', page)
     assert {"market", "sentiment", "news"} <= set(fields) and "social" not in page
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("language, expected", [
+    ("Chinese", True),
+    ("zh-CN", True),
+    ("简体中文", True),
+    ("English", False),
+])
+def test_is_zh_accepts_free_text_language_names(language, expected):
+    """output_language is user-written free text, so match by containment."""
+    import copy
+
+    from tradingagents import default_config
+    from tradingagents.agents.labels import is_zh
+    from tradingagents.dataflows.config import set_config
+
+    set_config(copy.deepcopy(default_config.DEFAULT_CONFIG))
+    set_config({"output_language": language})
+    try:
+        assert is_zh() is expected
+    finally:
+        set_config(copy.deepcopy(default_config.DEFAULT_CONFIG))
+
+
+@pytest.mark.unit
+def test_a_chinese_run_renders_chinese_labels_and_still_parses(tmp_path):
+    """Display labels follow output_language; the protocol line and the rating
+    parser keep working, so a Chinese report is machine-readable too."""
+    import copy
+
+    from tradingagents import default_config
+    from tradingagents.agents.rating import parse_rating
+    from tradingagents.dataflows.config import set_config
+
+    set_config(copy.deepcopy(default_config.DEFAULT_CONFIG))
+    set_config({"output_language": "Chinese"})
+    try:
+        out = write_report_tree(_state(), "510300.SS", tmp_path)
+        complete = out.read_text()
+        assert "# 交易分析报告：510300.SS" in complete
+        assert "## 一、分析师团队报告" in complete
+        assert "## 五、组合经理决策" in complete
+        assert "Trading Analysis Report" not in complete
+
+        # The PM decision is written in Chinese by the model; the parser must
+        # still recover the canonical rating from it.
+        from tradingagents.agents.schemas import PortfolioDecision, PortfolioRating, render_pm_decision
+
+        decision = PortfolioDecision(
+            rating=PortfolioRating.OVERWEIGHT,
+            executive_summary="分批增持。",
+            investment_thesis="资金面证据最干净。",
+        )
+        rendered = render_pm_decision(decision)
+        assert "**评级**：增持" in rendered
+        assert parse_rating(rendered) == "Overweight"
+    finally:
+        set_config(copy.deepcopy(default_config.DEFAULT_CONFIG))
+
+
+@pytest.mark.unit
+def test_protocol_lines_translate_for_display_but_not_in_state(tmp_path):
+    """The English protocol lines are a prompt contract parsers read, so the
+    state keeps them; the report the person reads shows Chinese instead."""
+    import copy
+
+    from tradingagents import default_config
+    from tradingagents.dataflows.config import set_config
+
+    analyst_text = ("结论如下。\n\n**Rating**: SELL\n\nFINAL TRANSACTION PROPOSAL: **SELL**\n\n"
+                     "**FINAL TRANSACTION PROPOSAL:** **BUY**")  # bold-colon variant
+    state = {**_state(), "market_report": analyst_text}
+
+    set_config(copy.deepcopy(default_config.DEFAULT_CONFIG))
+    set_config({"output_language": "Chinese"})
+    try:
+        out = write_report_tree(_state(), "510300.SS", tmp_path)  # smoke: unchanged state
+        # Now the localized tree:
+        out = write_report_tree(state, "510300.SS", tmp_path)
+        market = (tmp_path / "1_analysts" / "market.md").read_text()
+        assert "**评级**：卖出（SELL）" in market
+        assert "最终交易建议：**卖出（SELL）**" in market
+        assert "**Rating**: SELL" not in market
+        # Both spellings of the proposal line — the bold-colon one models also
+        # write — must be translated, leaving no English protocol line behind.
+        assert "FINAL TRANSACTION PROPOSAL" not in market
+        assert market.count("最终交易建议") == 2
+        # The state the run produced is untouched — parsers still see English.
+        assert state["market_report"] == analyst_text
+    finally:
+        set_config(copy.deepcopy(default_config.DEFAULT_CONFIG))
+
+
+@pytest.mark.unit
+def test_the_reports_language_comes_from_the_runs_settings_not_the_process(tmp_path):
+    """Reports are written after a run ends, by which time the process config
+    may belong to a different graph; the run's own output_language must win."""
+    import copy
+
+    from tradingagents import default_config
+    from tradingagents.dataflows.config import set_config
+
+    state = _state()
+    settings = dict(SETTINGS)
+    process_chinese_settings = {**settings, "output_language": "Chinese"}
+    english_settings = {**settings, "output_language": "English"}
+
+    # Process config says Chinese (as if another graph had just set it), but
+    # this run asked for English: the report must be English.
+    set_config(copy.deepcopy(default_config.DEFAULT_CONFIG))
+    set_config({"output_language": "Chinese"})
+    try:
+        out = write_report_tree(state, "AAPL", tmp_path, settings=english_settings)
+        complete = out.read_text()
+        assert "Trading Analysis Report: AAPL" in complete
+        assert "交易分析报告" not in complete
+    finally:
+        set_config(copy.deepcopy(default_config.DEFAULT_CONFIG))
+
+    # And the reverse: process config English, run asked for Chinese.
+    out = write_report_tree(state, "AAPL", tmp_path, settings=process_chinese_settings)
+    complete = out.read_text()
+    assert "# 交易分析报告：AAPL" in complete
+    assert "Trading Analysis Report" not in complete

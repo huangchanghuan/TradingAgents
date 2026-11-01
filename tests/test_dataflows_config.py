@@ -20,7 +20,10 @@ class DataflowsConfigIsolationTests(unittest.TestCase):
         cfg["tool_vendors"]["get_stock_data"] = "alpha_vantage"
 
         fresh = get_config()
-        self.assertEqual(fresh["data_vendors"]["core_stock_apis"], "yfinance")
+        # Compare against the shipped default rather than a literal, so editing the
+        # default chain does not read as a config-isolation regression.
+        self.assertEqual(fresh["data_vendors"]["core_stock_apis"],
+                         default_config.DEFAULT_CONFIG["data_vendors"]["core_stock_apis"])
         self.assertNotIn("get_stock_data", fresh["tool_vendors"])
 
     def test_set_config_does_not_alias_caller_nested_dicts(self):
@@ -47,10 +50,10 @@ class DataflowsConfigIsolationTests(unittest.TestCase):
         )
 
         fresh = get_config()
+        defaults = default_config.DEFAULT_CONFIG["data_vendors"]
         self.assertEqual(fresh["data_vendors"]["core_stock_apis"], "alpha_vantage")
-        self.assertEqual(fresh["data_vendors"]["technical_indicators"], "yfinance")
-        self.assertEqual(fresh["data_vendors"]["fundamental_data"], "sec_edgar,yfinance")
-        self.assertEqual(fresh["data_vendors"]["news_data"], "yfinance")
+        for category in ("technical_indicators", "fundamental_data", "news_data"):
+            self.assertEqual(fresh["data_vendors"][category], defaults[category], category)
 
     def test_nested_dict_updates_merge_one_level_deep(self):
         set_config({"tool_vendors": {"get_stock_data": "alpha_vantage"}})
@@ -91,11 +94,14 @@ def test_a_run_reads_its_own_graphs_vendors_not_the_last_graph_built():
     """Building a graph sets the process-wide config, and set_config merges, so
     a second graph built with the defaults was served the first one's vendors."""
     first = copy.deepcopy(default_config.DEFAULT_CONFIG)
-    first["tool_vendors"] = {"get_balance_sheet": "sec_edgar,yfinance"}
+    # A vendor chain no default uses, so a leak cannot pass for the default.
+    first["tool_vendors"] = {"get_balance_sheet": "alpha_vantage"}
     set_config(first)                                   # graph A is built
     second = _graph(copy.deepcopy(default_config.DEFAULT_CONFIG))
 
-    assert _vendors_seen_by_a_run(second) == ["sec_edgar,yfinance"]
+    assert _vendors_seen_by_a_run(second) == [
+        default_config.DEFAULT_CONFIG["data_vendors"]["fundamental_data"]
+    ]
 
 
 @pytest.mark.unit

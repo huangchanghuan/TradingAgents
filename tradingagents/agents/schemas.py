@@ -193,8 +193,25 @@ def render_trader_proposal(proposal: TraderProposal) -> str:
 
     The trailing ``FINAL TRANSACTION PROPOSAL: **BUY/HOLD/SELL**`` line is
     preserved for backward compatibility with the analyst stop-signal text
-    and any external code that greps for it.
+    and any external code that greps for it, whatever the report language;
+    the report writers translate it for display (``localize_protocol_lines``),
+    which is why no Chinese duplicate is emitted here.
     """
+    from tradingagents.agents.labels import action_zh, is_zh
+
+    if is_zh():
+        parts = [
+            f"**行动**：{action_zh(proposal.action.value)}",
+            "",
+            f"**理由**：{proposal.reasoning}",
+        ]
+        for label, value in (("买入价", proposal.entry_price),
+                             ("止损位", proposal.stop_loss),
+                             ("仓位规模", proposal.position_sizing)):
+            parts.extend(["", f"**{label}**：{value if value is not None and value != '' else '未提供'}"])
+        parts.extend(["", f"FINAL TRANSACTION PROPOSAL: **{proposal.action.value.upper()}**"])
+        return "\n".join(parts)
+
     parts = [
         f"**Action**: {proposal.action.value}",
         "",
@@ -268,11 +285,26 @@ class PortfolioDecision(BaseModel):
 def render_pm_decision(decision: PortfolioDecision) -> str:
     """Render a PortfolioDecision back to the markdown shape the rest of the system expects.
 
-    Memory log, CLI display, and saved report files all read this markdown,
-    so the rendered output preserves the exact section headers (``**Rating**``,
-    ``**Executive Summary**``, ``**Investment Thesis**``) that downstream
-    parsers and the report writers already handle.
+    Memory log, CLI display, and saved report files all read this markdown, so
+    the rendered output preserves the section headers' meaning (``**Rating**`` /
+    ``**评级**`` — the rating parser accepts both spellings) that downstream
+    parsers and the report writers handle.
     """
+    from tradingagents.agents.labels import is_zh, rating_zh
+
+    if is_zh():
+        parts = [
+            f"**评级**：{rating_zh(decision.rating.value)}",
+            "",
+            f"**执行摘要**：{decision.executive_summary}",
+            "",
+            f"**投资论点**：{decision.investment_thesis}",
+        ]
+        target = decision.price_target if decision.price_target is not None else "未提供"
+        parts.extend(["", f"**目标价**：{target}"])
+        parts.extend(["", f"**期限**：{decision.time_horizon or '未提供'}"])
+        return "\n".join(parts)
+
     parts = [
         f"**Rating**: {decision.rating.value}",
         "",

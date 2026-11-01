@@ -3,8 +3,23 @@ import logging
 from tradingagents.dataflows.config import get_config
 from tradingagents.dataflows.errors import (
     NoMarketDataError,
+    VendorNotApplicableError,
     VendorNotConfiguredError,
     VendorUnavailableError,
+)
+from tradingagents.dataflows.vendors.a_stock import (
+    build_verified_market_snapshot as get_a_stock_snapshot,
+    get_balance_sheet as get_a_stock_balance_sheet,
+    get_cashflow as get_a_stock_cashflow,
+    get_china_rates as get_a_stock_china_rates,
+    get_fundamentals as get_a_stock_fundamentals,
+    get_global_news as get_a_stock_global_news,
+    get_income_statement as get_a_stock_income_statement,
+    get_indicators as get_a_stock_indicators,
+    get_insider_transactions as get_a_stock_insider_transactions,
+    get_news as get_a_stock_news,
+    get_southbound_flow as get_a_stock_southbound_flow,
+    get_stock_data as get_a_stock_data,
 )
 from tradingagents.dataflows.vendors.alpha_vantage import (
     get_balance_sheet as get_alpha_vantage_balance_sheet,
@@ -38,6 +53,9 @@ from tradingagents.dataflows.vendors.yahoo.market import (
     get_YFin_data_online,
 )
 from tradingagents.dataflows.vendors.yahoo.news import get_global_news_yfinance, get_news_yfinance
+from tradingagents.dataflows.vendors.yahoo.snapshot import (
+    build_verified_market_snapshot as get_yfinance_snapshot,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +96,27 @@ TOOLS_CATEGORIES = {
             "get_macro_indicators",
         ]
     },
+    # Own category rather than macro_data: that category is configured to
+    # "fred", and a category chain applies to every tool in it, so a
+    # china-rates tool there would be routed to fred and fail. a_stock-only.
+    "cn_rates_data": {
+        "description": "China onshore rates: LPR quotes and the CGB treasury yield curve",
+        "tools": [
+            "get_china_rates",
+        ]
+    },
+    "fund_flow_data": {
+        "description": "Southbound Stock Connect (港股通) fund flow, A-share/HK context",
+        "tools": [
+            "get_southbound_flow",
+        ]
+    },
+    "verification": {
+        "description": "Deterministic verification snapshot of market data",
+        "tools": [
+            "get_verified_market_snapshot",
+        ]
+    },
     "prediction_markets": {
         "description": "Market-implied probabilities for forward-looking events",
         "tools": [
@@ -91,56 +130,82 @@ TOOLS_CATEGORIES = {
 # sentinel instead of aborting the run (a bad LLM-supplied indicator, a missing
 # key, or a network blip should not crash an analysis over flavour data). Core
 # categories (prices, fundamentals, news) still raise so a broken primary is loud.
-OPTIONAL_CATEGORIES = {"macro_data", "prediction_markets"}
+OPTIONAL_CATEGORIES = {"macro_data", "prediction_markets", "fund_flow_data", "cn_rates_data"}
 
 # Mapping of methods to their vendor-specific implementations
 VENDOR_METHODS = {
     # core_stock_apis
     "get_stock_data": {
+        # A-share codes are answered here; anything else steps aside for
+        # the next vendor, so the chain stays correct for US listings.
+        "a_stock": get_a_stock_data,
         "alpha_vantage": get_alpha_vantage_stock,
         "yfinance": get_YFin_data_online,
     },
     # technical_indicators
     "get_indicators": {
+        "a_stock": get_a_stock_indicators,
         "alpha_vantage": get_alpha_vantage_indicator,
         "yfinance": get_stock_stats_indicators_window,
     },
     # fundamental_data
     "get_fundamentals": {
+        "a_stock": get_a_stock_fundamentals,
         "alpha_vantage": get_alpha_vantage_fundamentals,
         "yfinance": get_yfinance_fundamentals,
     },
     "get_balance_sheet": {
+        "a_stock": get_a_stock_balance_sheet,
         "alpha_vantage": get_alpha_vantage_balance_sheet,
         "sec_edgar": get_sec_edgar_balance_sheet,
         "yfinance": get_yfinance_balance_sheet,
     },
     "get_cashflow": {
+        "a_stock": get_a_stock_cashflow,
         "alpha_vantage": get_alpha_vantage_cashflow,
         "sec_edgar": get_sec_edgar_cashflow,
         "yfinance": get_yfinance_cashflow,
     },
     "get_income_statement": {
+        "a_stock": get_a_stock_income_statement,
         "alpha_vantage": get_alpha_vantage_income_statement,
         "sec_edgar": get_sec_edgar_income_statement,
         "yfinance": get_yfinance_income_statement,
     },
     # news_data
     "get_news": {
+        "a_stock": get_a_stock_news,
         "alpha_vantage": get_alpha_vantage_news,
         "yfinance": get_news_yfinance,
     },
     "get_global_news": {
+        "a_stock": get_a_stock_global_news,
         "yfinance": get_global_news_yfinance,
         "alpha_vantage": get_alpha_vantage_global_news,
     },
     "get_insider_transactions": {
+        "a_stock": get_a_stock_insider_transactions,
         "alpha_vantage": get_alpha_vantage_insider_transactions,
         "yfinance": get_yfinance_insider_transactions,
+    },
+    # verification — the snapshot must be independent of the price path it
+    # checks: A-shares are priced by Tencent in the primary, so their snapshot
+    # goes first to a_stock (Sina/Eastmoney), never back to the same feed.
+    "get_verified_market_snapshot": {
+        "a_stock": get_a_stock_snapshot,
+        "yfinance": get_yfinance_snapshot,
     },
     # macro_data
     "get_macro_indicators": {
         "fred": get_fred_macro_data,
+    },
+    # cn_rates_data
+    "get_china_rates": {
+        "a_stock": get_a_stock_china_rates,
+    },
+    # fund_flow_data
+    "get_southbound_flow": {
+        "a_stock": get_a_stock_southbound_flow,
     },
     # prediction_markets
     "get_prediction_markets": {
@@ -234,6 +299,10 @@ def route_to_vendor(method: str, *args, **kwargs):
 
         try:
             return impl_func(*args, **kwargs)
+        except VendorNotApplicableError:
+            # A definitive "not my instrument": skip without recording, so an
+            # out-of-coverage vendor can't mask the covering vendors' verdicts.
+            continue
         except VendorUnavailableError as e:
             logger.warning("Vendor %r unavailable for %s: %s; trying next vendor.", vendor, method, e)
             # Kept so an all-unavailable chain can say the vendor was the
