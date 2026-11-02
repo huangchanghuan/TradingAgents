@@ -12,11 +12,16 @@ class ConditionalLogic:
     def should_continue_debate(self, state: AgentState) -> str:
         """Determine if debate should continue."""
 
-        if (
-            state["investment_debate_state"]["count"] >= 2 * self.max_debate_rounds
-        ):  # max_debate_rounds turns each for bull and bear
+        debate = state["investment_debate_state"]
+        if debate["count"] >= 2 * self.max_debate_rounds:
+            # max_debate_rounds turns each for bull and bear
             return "Research Manager"
-        if state["investment_debate_state"]["current_response"].startswith("Bull"):
+        # Route by turn parity, not by the response text: the turn prefix is
+        # stamped via ``debate_label`` and follows the report language ("Bull
+        # Analyst" vs "多方研究员"), so a prefix match silently starved the
+        # bear in Chinese runs. The graph always opens with the bull (count=0),
+        # so an odd count means the bull has just spoken.
+        if debate["count"] % 2 == 1:
             return "Bear Researcher"
         return "Bull Researcher"
 

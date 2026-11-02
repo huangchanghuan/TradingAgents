@@ -79,3 +79,33 @@ def test_debate_path_map_covers_full_router_range():
     }
     assert returns <= set(DEBATE_PATH_MAP)
     assert "Research Manager" in returns  # terminal reachable
+
+
+@pytest.mark.unit
+def test_debate_router_alternates_speakers():
+    # The router must alternate bull/bear by turn parity, independent of the
+    # response text. It previously matched a "Bull" prefix on the response,
+    # which in Chinese runs ("多方研究员: ...") never matched and starved the
+    # bear of every turn (#zh-bear-starved).
+    logic = ConditionalLogic(max_debate_rounds=3)
+    # Turn 0 -> bull opens; after each bull turn (odd count) the bear answers.
+    assert logic.should_continue_debate(_debate_state("Bull Analyst: x", 0)) == "Bull Researcher"
+    assert logic.should_continue_debate(_debate_state("Bull Analyst: x", 1)) == "Bear Researcher"
+    # After each bear turn (even count) the bull rebuts.
+    assert logic.should_continue_debate(_debate_state("Bear Analyst: y", 2)) == "Bull Researcher"
+    assert logic.should_continue_debate(_debate_state("Bear Analyst: y", 3)) == "Bear Researcher"
+
+
+@pytest.mark.unit
+def test_debate_router_ignores_localized_labels():
+    # Chinese turn labels ("多方研究员"/"空方研究员") must not break alternation.
+    logic = ConditionalLogic(max_debate_rounds=2)
+    assert logic.should_continue_debate(_debate_state("多方研究员: 看多论证", 1)) == "Bear Researcher"
+    assert logic.should_continue_debate(_debate_state("空方研究员: 看空论证", 2)) == "Bull Researcher"
+
+
+@pytest.mark.unit
+def test_debate_router_terminates_at_round_limit():
+    logic = ConditionalLogic(max_debate_rounds=2)
+    assert logic.should_continue_debate(_debate_state("多方研究员: x", 4)) == "Research Manager"
+    assert logic.should_continue_debate(_debate_state("Bull Analyst: x", 3)) != "Research Manager"
