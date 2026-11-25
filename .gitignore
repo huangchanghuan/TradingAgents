@@ -224,3 +224,12 @@ reports/
 
 # WorkBuddy session working data
 .workbuddy/
+# WorkBuddy published-app markers (generated per deploy, not for repo)
+.wbapp_*.genie
+# Playwright MCP session artifacts
+.playwright-mcp/
+# Local verification screenshots / scratch files
+verify*.png
+sentiment_chart_verify.png
+backup-stock-home.png
+情绪波动图_*.html
