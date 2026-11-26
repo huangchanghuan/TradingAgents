@@ -230,6 +230,8 @@ reports/
 .playwright-mcp/
 # Local verification screenshots / scratch files
 verify*.png
+crash-review-refresh.png
 sentiment_chart_verify.png
 backup-stock-home.png
 情绪波动图_*.html
+威科夫*.html
