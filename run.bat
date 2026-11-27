@@ -3,6 +3,8 @@ REM TradingAgents Windows 快捷运行脚本（对应 Linux 的 run.sh）
 REM 用法: run.bat <代码> [日期 YYYY-MM-DD] [market,news,fundamentals]
 REM 前置: 项目根目录有 .env（python-dotenv 会自动加载）；.venv 已建好
 setlocal
+REM 强制 Python 子进程使用 UTF-8 输出，避免 GBK 控制台下输出 ✓ 等字符时崩溃
+set "PYTHONIOENCODING=utf-8"
 cd /d %~dp0
 
 set "TICKER=%~1"
